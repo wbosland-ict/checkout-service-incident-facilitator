@@ -1,0 +1,77 @@
+# Model Answer — Exercise 4 fix diff (FACILITATOR MODEL ANSWER)
+
+This is a reference implementation of RFC `W 2607 012` (options **A + B +
+C** from `example-problem-record.md`) applied to
+`checkout-service-incident-sourcecode/`. Use it to sanity-check a
+participant's AI-assisted diff — not to hand out before the exercise.
+
+It was produced and verified the same way a participant is asked to work:
+implement the fix, then confirm the test suite goes from **1 passed** (the
+buggy baseline) to **4 passed** (smoke test + 3 regression cases across
+cart sizes 4/8/11), with the new regression test failing against the
+original buggy code first.
+
+## A — Restore efficient fetching (`Cart/CartRepository.cs`)
+
+Replaces `FindAsync` (no related data) with a single eager-loaded query
+covering the cart, its items, and each item's product.
+
+```diff
++using Microsoft.EntityFrameworkCore;
++
+ namespace ShopFast.Checkout.Cart;
+
+ public class CartRepository : ICartRepository
+@@
+     public async Task<Cart?> GetByIdAsync(long cartId)
+     {
+-        return await _dbContext.Carts.FindAsync(cartId);
++        return await _dbContext.Carts
++            .Include(c => c.Items)
++            .ThenInclude(i => i.Product)
++            .FirstOrDefaultAsync(c => c.Id == cartId);
+     }
+ }
+```
+
+A split query (`.AsSplitQuery()`) was also considered; for this shape (one
+collection + one reference nav) a single joined query is simpler and
+issues one SQL statement. `CartItem.Product` can stay `virtual` — eager
+loading marks it as loaded, so lazy loading never fires for carts fetched
+through this method.
+
+## A — Narrow the transaction scope (`CheckoutService.cs`)
+
+The transaction no longer wraps the cart read or the inventory/payment
+remote calls — only the final order write, which is the only step that
+needs DB atomicity. This is also where the `Idempotency-Key` for the
+payment call is generated, one per checkout attempt.
+
+```diff
+     public async Task<CheckoutResult> StartAsync(long cartId)
+     {
+-        using var transaction = await _dbContext.Database.BeginTransactionAsync();
+-
+         var cart = await _cartRepository.GetByIdAsync(cartId)
+             ?? throw new CartNotFoundException();
+
+         var lines = cart.Items
+             .Select(i => new LineItem(i.Product.Sku, i.Product.Price, i.Quantity))
+             .ToList();
+
++        var idempotencyKey = $"checkout-{cartId}-{Guid.NewGuid():N}";
++
+         var reservation = await _inventoryClient.ReserveAsync(lines);
+-        var payment = await _paymentClient.ChargeAsync(reservation, lines);
+-        var result = await _orderWriter.CreateAsync(cartId, reservation, payment);
++        var payment = await _paymentClient.ChargeAsync(reservation, lines, idempotencyKey);
+
++        using var transaction = await _dbContext.Database.BeginTransactionAsync();
++        var result = await _orderWriter.CreateAsync(cartId, reservation, payment);
+         await transaction.CommitAsync();
++
+         return result;
+     }
+ }
+```
+

@@ -10,7 +10,7 @@ answer.
 |---|---|
 | A: Incident outcome | Exercise 3: Problem analysis |
 | B: Problem outcome | Exercise 3, Part D: Request for Change |
-| C: Change outcome | Exercise 4 (draft): Fixing the source code |
+| C: Change outcome | Exercise 4: Fixing the source code |
 
 ---
 
@@ -56,11 +56,15 @@ answer.
 
 ---
 
-## Card C: Change outcome (W 2607 012) — draft
+## Card C: Change outcome (W 2607 012)
 
 - **Approved RFC `W 2607 012`** for `checkout-service v2.14.1`: this is
   what Exercise 4 implements in the source code. Scope is the same as
   Card B's "In the RFC" bullet; nothing else.
+- **Where the code is:** `checkout-service-incident-sourcecode/` — the
+  v2.14.0 snapshot, post-PR #4821. `dotnet build && dotnet test` should
+  give you **1 passed** before you change anything. The code carries no
+  comments or hints about what's wrong; that's deliberate.
 - **What to build:** a single-query fetch for cart items + products
   (eager loading via `.Include()`/`.ThenInclude()`, or a split query), a
   transaction scope narrowed to exclude the inventory/payment remote
@@ -68,8 +72,10 @@ answer.
   payment client with backoff + jitter + `Retry-After` handling +
   circuit breaker + `Idempotency-Key`, and a query-count regression test
   with realistic cart sizes (4–11 items).
+- **Start with the test.** Write the query-count regression test first
+  and see it fail against the unchanged code, then fix. The fixtures you
+  need (`TestDbContextFactory`, `QueryCountingInterceptor`,
+  `CartFixtures`) are already in the test project.
 - **Out of scope here:** pool resizing, CI load-test stage, front-end
   retry alignment, and the rate-limit increase — these stay separate
   follow-up actions, not code changes in this exercise.
-- **Note:** Exercise 4 is a draft; this card will need updating once the
-  sample source repo and model-answer diff are added.

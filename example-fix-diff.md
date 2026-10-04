@@ -7,7 +7,7 @@ participant's AI-assisted diff — not to hand out before the exercise.
 
 It was produced and verified the same way a participant is asked to work:
 implement the fix, then confirm the test suite goes from **1 passed** (the
-buggy baseline) to **5 passed** (smoke test + 3 regression cases across
+buggy baseline) to **4 passed** (smoke test + 3 regression cases across
 cart sizes 4/8/11), with the new regression test failing against the
 original buggy code first.
 
@@ -77,35 +77,40 @@ payment call is generated, one per checkout attempt.
 
 ## B — Harden the payment client (`Payment/PaymentClient.cs`)
 
-Adds exponential backoff with jitter, honours a gateway-supplied
-`Retry-After` on 429s instead of blind fixed-delay retries, trips a
-circuit breaker after repeated failures, and threads an idempotency key
-through to the (stubbed) charge request.
+The starter code already retries, but exactly as
+`problem-evidence/checkout-service-config.yaml` describes it: 3 attempts,
+**fixed** 200 ms delay, **no jitter**, retrying on 429 as readily as on a
+5xx, no circuit breaker, and no idempotency key. That is the retry policy
+that turned a DB slowdown into a payment-gateway rate-limit breach and 7
+duplicate charges, so this is a change to existing behaviour, not new
+code on a blank stub.
+
+The fix keeps the same shape and attempt budget, but: backs off
+exponentially with jitter, only retries a 429 when the gateway actually
+supplied a `Retry-After` (and then waits exactly that long), trips a
+circuit breaker after repeated failures, and threads an
+`Idempotency-Key` through to the charge request.
 
 ```diff
- public record PaymentResult(string ChargeId);
-
-+public class PaymentRateLimitedException : Exception
-+{
+ public class PaymentGatewayException : Exception
+ {
+     public int StatusCode { get; }
 +    public TimeSpan? RetryAfter { get; }
-+
-+    public PaymentRateLimitedException(TimeSpan? retryAfter)
-+        : base("Payment gateway rate limit exceeded (429).")
-+    {
+
+-    public PaymentGatewayException(int statusCode, string message)
++    public PaymentGatewayException(int statusCode, string message, TimeSpan? retryAfter = null)
+         : base(message)
+     {
+         StatusCode = statusCode;
 +        RetryAfter = retryAfter;
-+    }
-+}
-+
-+public class PaymentGatewayTransientException : Exception
+     }
+ }
+
+@@
++public class PaymentGatewayCircuitOpenException : Exception
 +{
-+    public PaymentGatewayTransientException(string message) : base(message)
-+    {
-+    }
-+}
-+
-+public class PaymentGatewayUnavailableException : Exception
-+{
-+    public PaymentGatewayUnavailableException(string message) : base(message)
++    public PaymentGatewayCircuitOpenException(string message)
++        : base(message)
 +    {
 +    }
 +}
@@ -118,46 +123,61 @@ through to the (stubbed) charge request.
 
  public class PaymentClient : IPaymentClient
  {
--    public async Task<PaymentResult> ChargeAsync(ReservationResult reservation, IReadOnlyList<LineItem> lines)
-+    private const int MaxAttempts = 4;
+     private const int MaxAttempts = 3;
+-    private const int BackoffDelayMs = 200;
 +    private const int CircuitBreakerFailureThreshold = 5;
 +    private static readonly TimeSpan BaseDelay = TimeSpan.FromMilliseconds(200);
-+    private static readonly TimeSpan CircuitBreakerOpenDuration = TimeSpan.FromSeconds(30);
-+
++    private static readonly TimeSpan CircuitOpenDuration = TimeSpan.FromSeconds(30);
+
+-    public async Task<PaymentResult> ChargeAsync(ReservationResult reservation, IReadOnlyList<LineItem> lines)
 +    private int _consecutiveFailures;
 +    private DateTimeOffset _circuitOpenUntil = DateTimeOffset.MinValue;
 +
 +    public async Task<PaymentResult> ChargeAsync(ReservationResult reservation, IReadOnlyList<LineItem> lines, string idempotencyKey)
-+    {
+     {
 +        if (DateTimeOffset.UtcNow < _circuitOpenUntil)
 +        {
-+            throw new PaymentGatewayUnavailableException(
-+                "Payment gateway circuit breaker is open; refusing to call out until it resets.");
++            throw new PaymentGatewayCircuitOpenException(
++                "Payment gateway circuit breaker is open; not sending further charge requests yet.");
 +        }
 +
-+        for (var attempt = 1; attempt <= MaxAttempts; attempt++)
-+        {
-+            try
-+            {
+         for (var attempt = 1; attempt <= MaxAttempts; attempt++)
+         {
+             try
+             {
+-                return await SendChargeRequestAsync(reservation, lines);
 +                var result = await SendChargeRequestAsync(reservation, lines, idempotencyKey);
 +                _consecutiveFailures = 0;
 +                return result;
-+            }
-+            catch (PaymentRateLimitedException ex) when (attempt < MaxAttempts)
-+            {
-+                RecordFailure();
-+                await Task.Delay(ex.RetryAfter ?? ComputeBackoffWithJitter(attempt));
-+            }
-+            catch (PaymentGatewayTransientException) when (attempt < MaxAttempts)
-+            {
+             }
+             catch (PaymentGatewayTimeoutException) when (attempt < MaxAttempts)
+             {
+-                await Task.Delay(BackoffDelayMs);
 +                RecordFailure();
 +                await Task.Delay(ComputeBackoffWithJitter(attempt));
-+            }
+             }
+-            catch (PaymentGatewayException ex) when (attempt < MaxAttempts && IsRetryable(ex.StatusCode))
++            catch (PaymentGatewayException ex) when (attempt < MaxAttempts && IsRetryable(ex))
+             {
+-                await Task.Delay(BackoffDelayMs);
++                RecordFailure();
++                await Task.Delay(ex.RetryAfter ?? ComputeBackoffWithJitter(attempt));
+             }
+         }
+
++        RecordFailure();
+         throw new PaymentGatewayException(502, $"Payment gateway did not succeed after {MaxAttempts} attempts.");
+     }
+
+-    private static bool IsRetryable(int statusCode)
++    private static bool IsRetryable(PaymentGatewayException ex)
++    {
++        if (ex.StatusCode == 429)
++        {
++            return ex.RetryAfter is not null;
 +        }
 +
-+        RecordFailure();
-+        throw new PaymentGatewayUnavailableException(
-+            $"Payment gateway did not succeed after {MaxAttempts} attempts.");
++        return ex.StatusCode >= 500;
 +    }
 +
 +    private void RecordFailure()
@@ -165,29 +185,34 @@ through to the (stubbed) charge request.
 +        _consecutiveFailures++;
 +        if (_consecutiveFailures >= CircuitBreakerFailureThreshold)
 +        {
-+            _circuitOpenUntil = DateTimeOffset.UtcNow.Add(CircuitBreakerOpenDuration);
++            _circuitOpenUntil = DateTimeOffset.UtcNow.Add(CircuitOpenDuration);
 +        }
 +    }
 +
 +    private static TimeSpan ComputeBackoffWithJitter(int attempt)
-+    {
+     {
+-        return statusCode == 429 || statusCode >= 500;
 +        var exponential = BaseDelay * Math.Pow(2, attempt - 1);
 +        var jitter = Random.Shared.NextDouble() * exponential.TotalMilliseconds * 0.2;
 +        return exponential + TimeSpan.FromMilliseconds(jitter);
-+    }
-+
+     }
+
+-    private async Task<PaymentResult> SendChargeRequestAsync(ReservationResult reservation, IReadOnlyList<LineItem> lines)
 +    private async Task<PaymentResult> SendChargeRequestAsync(ReservationResult reservation, IReadOnlyList<LineItem> lines, string idempotencyKey)
      {
          await Task.Delay(1);
          return new PaymentResult(Guid.NewGuid().ToString("N"));
+     }
+ }
 ```
 
-A stricter answer would stop retrying on **any** 429 unless `Retry-After`
-is present and acceptable; this version always honours `Retry-After` when
-given and otherwise backs off exponentially with jitter, capped at
-`MaxAttempts`. The gateway call itself is still a stub (`SendChargeRequestAsync`
-never actually throws these exceptions) — a real implementation would map
-the HTTP client's status codes/headers onto them.
+`SendChargeRequestAsync` is still a stub that never throws, so none of
+this retry logic actually fires in the sample repo — the point is the
+policy, not the transport. A participant who notices that and says "this
+is untested behaviour, I'd want a fake gateway that returns 429 with and
+without `Retry-After`" is making exactly the right observation; the
+exercise's "watch out for" list calls out tests that look safe but prove
+nothing.
 
 ## C — Query-count regression test (new file:
 `tests/ShopFast.Checkout.Tests/QueryCountRegressionTests.cs`)
@@ -257,7 +282,7 @@ dotnet test
   for 8 items — still the N+1 shape even though the absolute numbers
   differ from a first impression, because fixture-setup commands are
   excluded here unlike in earlier drafts of this test).
-- After the fix: **5 passed** (1 smoke test + 3 regression cases), 0
+- After the fix: **4 passed** (1 smoke test + 3 regression cases), 0
   failed, 0 skipped.
 
 ## What a participant's AI-assisted diff might reasonably differ on
@@ -281,3 +306,12 @@ dotnet test
   value, so look for *a* bounded retry count, backoff that grows, and a
   breaker that stops hammering a failing gateway, not an exact match to
   this file's constants.
+- Whether they keep `MaxAttempts` at 3 — the config's attempt count was
+  never the problem; the fixed delay, the blind 429 retry and the missing
+  idempotency key were. A diff that drops to 1 attempt "to be safe" is
+  over-correcting and should be challenged.
+- Where the `Idempotency-Key` is generated — here `CheckoutService` makes
+  one per checkout attempt and passes it down. Generating it inside
+  `PaymentClient` would be wrong (a retry at a higher level would produce
+  a fresh key and re-enable double charges); that's worth catching if a
+  group does it.

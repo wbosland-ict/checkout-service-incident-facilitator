@@ -42,8 +42,8 @@ Key rules to emphasise:
 | **Total (Exercises 1–3)** | **~195 min** |
 
 **Catch-up cards:** hand out `catch-up-cards.md` (Card A before
-Exercise 3, Card B before Part D of Exercise 3) so groups that fell
-behind can continue.
+Exercise 3, Card B before Part D of Exercise 3, Card C before
+Exercise 4) so groups that fell behind can continue.
 
 **Pacing within exercises** (facilitator only; the exercise files show
 just the overall time box):
@@ -260,24 +260,64 @@ Look for:
 - *CAB review (step 5):* Run the "sceptical CAB member" prompt live on
   one RFC and discuss the questions it raises. Would you approve it?
 
-### Exercise 4: Fixing the source code with AI (draft)
+### Exercise 4: Fixing the source code with AI
 
-The sample source repo exists at `checkout-service-incident-sourcecode/`
-(ASP.NET Core / EF Core, C#; reproduces the PR #4821 bug — buggy
-`FindAsync` + lazy-loaded `CartItem.Product`, and a transaction scope
-wrapping the inventory/payment calls in `CheckoutService.StartAsync`). It
-builds and tests clean with `dotnet build` / `dotnet test` (1 passed — no
-comments or notes in the code point out what's wrong).
+The sample source repo is at `checkout-service-incident-sourcecode/`
+(EF Core, C#; reproduces the PR #4821 bug — buggy `FindAsync` +
+lazy-loaded `CartItem.Product`, a transaction scope wrapping the
+inventory/payment calls in `CheckoutService.StartAsync`, and a
+`PaymentClient` implementing exactly the broken retry policy from
+`checkout-service-config.yaml`). It builds and tests clean with
+`dotnet build` / `dotnet test` (**1 passed** — no comments or notes in
+the code point out what's wrong).
 
-A model-answer diff is now available at `example-fix-diff.md`, covering
-RFC options A (eager loading + narrowed transaction), B (hardened payment
-client), and C (completed query-count regression test), with notes on
-where a participant's AI-assisted diff can reasonably differ.
+A model-answer diff is available at `example-fix-diff.md`, covering RFC
+options A (eager loading + narrowed transaction), B (hardened payment
+client), and C (the query-count regression test), with notes on where a
+participant's AI-assisted diff can reasonably differ. After the fix the
+suite shows **4 passed**.
+
+**Expected good outcome:**
+
+- A regression test written *first* and demonstrably **failing** against
+  the unchanged code (the buggy code issues ~6 queries for a 4-item cart
+  and ~10 for 8 items), then passing after the fix. Groups that write the
+  test after the fix have no evidence it catches anything.
+- `CartRepository` fetching cart items and their products in one query
+  (`.Include()`/`.ThenInclude()`, a split query, or a projection — all
+  defensible).
+- A transaction in `CheckoutService.StartAsync` that no longer spans the
+  inventory and payment-gateway calls.
+- A payment client that backs off exponentially with jitter, only retries
+  a 429 when `Retry-After` is present, trips a circuit breaker, and
+  threads an idempotency key generated **per checkout**, not per attempt.
+- A diff scoped to the RFC: no pool resizing, no CI changes, no
+  opportunistic refactors.
+- A participant who can explain every line without re-reading the AI's
+  summary.
+
+**Discussion prompts:**
+
+- Who wrote the test first, and who let the AI write test and fix in one
+  go? Did the second group ever see their test fail? What would it have
+  taken to notice it was asserting nothing?
+- The payment retry policy was in the config file all along, and the
+  incident timeline shows what it caused. Did your AI connect those two
+  on its own, or only after you pointed at them?
+- Where did the AI exceed the RFC scope? Who caught it, and how — by
+  reading the diff, or because something broke?
+- `SendChargeRequestAsync` is a stub that never fails, so none of the new
+  retry logic is actually exercised. Did anyone flag that the hardening
+  is untested? What would you want before shipping it?
+- Compare two groups' `CartRepository` fixes. Joined query, split query,
+  or projection — can each group defend their choice on round trips vs.
+  payload size vs. change tracking?
+- How much of the final diff would you have written faster by hand? Where
+  did the AI genuinely save time?
 
 **Still to do before running this exercise:**
-- Pilot the exercise end-to-end with an AI coding assistant, then fill in:
-  expected good outcome, discussion prompts, and the timing row in
-  "Overall timing" above.
+- Pilot end-to-end with an AI coding assistant and fill in the timing row
+  in "Overall timing" above.
 
 ## Closing discussion: where AI helps vs. doesn't
 

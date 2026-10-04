@@ -48,7 +48,7 @@ All times UTC.
 | 2026-07-09 | Engineer submits RFC `W 2607 012` (**Exercise 3, Part D**) for `checkout-service v2.14.1`, linked to P 2607 007 and I 2607 041. |
 | target 07-16 | Desired completion: before "saved carts" (07-21) and the back-to-school campaign (August). |
 | TBD | Engineer implements the approved change in the source code
-  (**Exercise 4, draft** — not yet runnable; needs a sample source repo). |
+  (**Exercise 4**, against `checkout-service-incident-sourcecode/`). |
 
 ## Root cause (single sentence)
 

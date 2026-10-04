@@ -77,11 +77,14 @@ your own (sanitised) data. These are starting points, not scripts.
 - "Review this RFC as a sceptical Change Advisory Board member. List the
   top 5 questions you would ask before approving it."
 
-## Change: implementing the fix (draft, Exercise 4)
+## Change: implementing the fix (Exercise 4)
 
 - "Here are sections 2 and 3 of an approved RFC. Propose an implementation
   plan against this codebase before writing any code. [paste RFC
   sections]"
+- "Write a test that fails if this code path issues more than one SQL
+  query for N related items. Don't change the production code yet — I
+  want to see the test fail first."
 - "Rewrite this repository method to fetch related entities in a single
   query instead of lazy-loaded navigation properties. Explain the
   trade-offs of `.Include()`/`.ThenInclude()` vs. a split query vs. a
@@ -89,11 +92,10 @@ your own (sanitised) data. These are starting points, not scripts.
 - "Narrow this transaction scope so the database connection isn't
   held during remote calls. What has to change for lazy loading to still
   work?"
-- "Add exponential backoff with jitter to this client, stop retrying on
-  429 unless `Retry-After` allows it, and add a circuit breaker. Keep the
-  existing method signatures."
-- "Write a test that fails if this code path issues more than one SQL
-  query for N related items."
+- "This client's retry policy matches the one in our config file.
+  Critique it against the incident timeline, then fix it: exponential
+  backoff with jitter, stop retrying on 429 unless `Retry-After` allows
+  it, add a circuit breaker, and make the requests idempotent."
 - "Review this diff as a strict code reviewer: does it match this RFC
   scope exactly? Any risk it introduces that isn't mentioned in the RFC?"
 

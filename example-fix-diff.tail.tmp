@@ -1,0 +1,92 @@
+## C — Query-count regression test (new file:
+`tests/ShopFast.Checkout.Tests/QueryCountRegressionTests.cs`)
+
+```csharp
+using ShopFast.Checkout.Cart;
+using ShopFast.Checkout.Tests.Fixtures;
+
+namespace ShopFast.Checkout.Tests;
+
+public class QueryCountRegressionTests
+{
+    [Theory]
+    [InlineData(4)]
+    [InlineData(8)]
+    [InlineData(11)]
+    public async Task GetByIdAsync_DoesNotIssueOneQueryPerCartItem(int itemCount)
+    {
+        var (setupContext, connection) = TestDbContextFactory.CreateContext();
+        await using var disposableConnection = connection;
+        await using var disposableSetupContext = setupContext;
+
+        var cart = CartFixtures.CreateCartWithItems(setupContext, itemCount);
+
+        var interceptor = new QueryCountingInterceptor();
+        await using var dbContext = TestDbContextFactory.CreateContextOnConnection(connection, interceptor);
+
+        var repository = new CartRepository(dbContext);
+        var loaded = await repository.GetByIdAsync(cart.Id)
+            ?? throw new InvalidOperationException("Cart not found.");
+
+        var skus = loaded.Items.Select(i => i.Product.Sku).ToList();
+        Assert.Equal(itemCount, skus.Count);
+
+        Assert.True(
+            interceptor.QueryCount <= 2,
+            $"Expected at most 2 queries regardless of cart size, but saw {interceptor.QueryCount} " +
+            $"for a cart with {itemCount} items - this indicates an N+1 query pattern.");
+    }
+}
+```
+
+**Why it measures on a second `DbContext` over the same connection:** the
+starter repo's `TestDbContextFactory.CreateContext()` already keeps schema
+creation off the interceptor, but fixture setup (`CartFixtures`, via
+`SaveChanges`) also issues reader commands on Sqlite (generated keys use
+`RETURNING`, which goes through `ExecuteReader`). Building the cart on one
+context and then attaching the interceptor only to a second, fresh context
+over the same connection isolates the count to exactly what
+`GetByIdAsync` issues. A participant who reuses one interceptor-attached
+context for both setup and the call under test will see inflated,
+cart-size-dependent counts on *both* the buggy and the fixed code — worth
+flagging if it comes up, since "a weak/misleading regression test is worse
+than none" is explicitly called out in the exercise's "Watch out for"
+section.
+
+## Verifying this model answer
+
+Applied against `checkout-service-incident-sourcecode/`:
+
+```powershell
+dotnet test
+```
+
+- Before the fix: `QueryCountRegressionTests` fails for all three cart
+  sizes (buggy code shows unbounded growth, e.g. 6 queries for 4 items, 10
+  for 8 items — still the N+1 shape even though the absolute numbers
+  differ from a first impression, because fixture-setup commands are
+  excluded here unlike in earlier drafts of this test).
+- After the fix: **5 passed** (1 smoke test + 3 regression cases), 0
+  failed, 0 skipped.
+
+## What a participant's AI-assisted diff might reasonably differ on
+
+- `.Include()`/`.ThenInclude()` vs. a split query vs. a DTO projection —
+  all three are legitimate; ask them to explain the trade-off (joined
+  query = 1 round trip but a wider result set with duplicate parent
+  columns; split query = N round trips but no column duplication;
+  projection = smallest payload but no tracked entities).
+- Where exactly the transaction boundary should sit — some valid answers
+  narrow it to just the `OrderWriter` call (as here), others might argue
+  for no transaction at all if `OrderWriter` becomes a single atomic
+  write. Either is defensible; no transaction around the remote calls is
+  the non-negotiable part.
+- How strictly the payment client refuses to retry on 429 without
+  `Retry-After` — anywhere from "never retry a 429 without it" to "retry
+  with backoff anyway, just honour it when present" is reasonable; it
+  should be a deliberate choice they can explain, not an accident.
+- Exact circuit-breaker thresholds/durations and backoff constants — there
+  is no single correct number here; the RFC doesn't specify a precise
+  value, so look for *a* bounded retry count, backoff that grows, and a
+  breaker that stops hammering a failing gateway, not an exact match to
+  this file's constants.

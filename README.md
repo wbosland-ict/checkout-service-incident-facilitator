@@ -67,8 +67,7 @@ By the end of this workshop, participants will be able to:
   - `exercises/exercise-3-problem-analysis.md`: problem analysis
     (Parts A–C) and Request for Change (Part D)
   - `exercises/exercise-4-fix-with-ai.md`: implementing the approved
-    change in the source code (task list still being piloted — see its
-    TODOs)
+    change in the source code (timing still being piloted)
 - **`checkout-service-incident-sourcecode/`**: runnable ASP.NET Core / EF
   Core (C#) sample reproducing the PR #4821 bug, used in Exercise 4. See
   its own `README.md` for build/test instructions and how it maps to the
@@ -113,15 +112,18 @@ By the end of this workshop, participants will be able to:
 2. Hand out `checkout-service-incident-exercises/` and
    `checkout-service-incident-files/` (optionally without
    `problem-evidence/` until Exercise 3).
-3. Run Exercises 1 → 3 in order; each builds on the previous one.
-   Exercise 4 has a runnable sample source repo
-   (`checkout-service-incident-sourcecode/`) and a model-answer diff
-   (`example-fix-diff.md`), but its task list and timing are still being
-   piloted — see its TODOs.
-4. After each exercise, spend 5–10 minutes comparing findings and
+3. Run Exercises 1 → 4 in order; each builds on the previous one. Hand
+   out Card A before Exercise 3, Card B before Exercise 3 Part D, and
+   Card C before Exercise 4 (`catch-up-cards.md`).
+4. For Exercise 4, hand out `checkout-service-incident-sourcecode/` and
+   have participants verify `dotnet build && dotnet test` works (1
+   passed) before they start. The model answer is in
+   `example-fix-diff.md`. Timing for this exercise is still being
+   piloted — see the TODO in `facilitator-guide.md`.
+5. After each exercise, spend 5–10 minutes comparing findings and
    discussing where AI output was accurate, incomplete or made up.
-5. Close with the facilitator-led discussion in `facilitator-guide.md`
+6. Close with the facilitator-led discussion in `facilitator-guide.md`
    ("Where AI helps vs. where it doesn't").
-6. Optionally finish with Part 3 of `workshop-slides.pptx` (~20 min plus
+7. Optionally finish with Part 3 of `workshop-slides.pptx` (~20 min plus
    discussion): a concept for our own TopDesk MCP server. TopDesk has no
    MCP server; nothing in Part 3 has been built.
