@@ -62,14 +62,14 @@ By the end of this workshop, participants will be able to:
   - `exercises/exercise-3-problem-analysis.md`
   - `exercises/exercise-4-change-request.md`
 - **`checkout-service-incident-files/`**: synthetic evidence for participants
-  - `checkout-service-topdesk/`: TopDesk incident `I 2607 041` and a
-    problem template
-  - `checkout-service-payload-and-log-excerpts/`: Grafana alerts (posted to
+  - `topdesk-incident/`: TopDesk incident `I 2607 041`
+  - `topdesk-problem/`: TopDesk problem template
+  - `payload-and-log-excerpts/`: Grafana alerts (posted to
     Teams), Teams channel excerpts, service logs
-  - `checkout-service-metrics-and-deploy-history/`: CSV metrics, deploy
+  - `metrics-and-deploy-history/`: CSV metrics, deploy
     history, post-rollback recovery data
-  - `checkout-service-runbook/`: the existing runbook (deliberately incomplete; participants find the gaps in Exercise 3)
-  - `checkout-service-problem-evidence/`: extra evidence for the problem
+  - `runbook/`: the existing runbook (deliberately incomplete; participants find the gaps in Exercise 3)
+  - `problem-evidence/`: extra evidence for the problem
     analysis (code diff, config, traffic trend, payment reconciliation,
     stakeholder notes). **Hand these out at the start of Exercise 3**
     for the most realistic flow, or share everything up front for
@@ -98,7 +98,7 @@ By the end of this workshop, participants will be able to:
    `scenario/00-incident-brief.md`) and how it maps to TopDesk.
 2. Hand out `checkout-service-incident-exercises/` and
    `checkout-service-incident-files/` (optionally without
-   `checkout-service-problem-evidence/` until Exercise 3).
+   `problem-evidence/` until Exercise 3).
 3. Run Exercises 1 → 4 in order; each builds on the previous one.
 4. After each exercise, spend 5–10 minutes comparing findings and
    discussing where AI output was accurate, incomplete or made up.

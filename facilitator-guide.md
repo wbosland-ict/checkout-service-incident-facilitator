@@ -306,6 +306,6 @@ for:
   style and RFC template to make it even more recognisable.
 - For a shorter session, run Exercises 1+2 as one combined "incident"
   exercise.
-- For a more advanced group, hold back `checkout-service-problem-evidence/`
+- For a more advanced group, hold back `problem-evidence/`
   and make participants request specific evidence ("I'd need the PR diff
   and the retry config"), handing out files only when asked.
