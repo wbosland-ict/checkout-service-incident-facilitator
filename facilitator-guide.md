@@ -13,8 +13,9 @@ of the relevant exercise. They contain the model answers.
 | 2 | Triage: impact and priority | Service engineer | Incident | 1 |
 | 3 | Restore service (a workaround is allowed) and close the incident | Service engineer | Incident | 2 |
 | 4 | If a long-term fix is needed: register a problem | Service engineer | Problem | 2 |
-| 5 | Analyse the problem thoroughly, choose a solution, write the postmortem | Service engineer | Problem | 3 |
-| 6 | Submit a Request for Change (`rfc-template.docx`) | Service engineer | Change | 4 |
+| 5 | Analyse the problem thoroughly, choose a solution | Service engineer | Problem | 3 (Parts A–C) |
+| 6 | Submit a Request for Change (`rfc-template.docx`) | Service engineer | Change | 3 (Part D) |
+| 7 | Implement the approved change in the source code | Service engineer | Change | 4 |
 
 Key rules to emphasise:
 
@@ -26,7 +27,7 @@ Key rules to emphasise:
 - The RFC is for the **long-term solution** that comes out of the problem
   analysis.
 
-## Overall timing (≈3¾ hours)
+## Overall timing (≈3¼ hours for Exercises 1–3; Exercise 4 has a runnable sample repo but is not yet timed)
 
 | Segment | Time |
 |---|---|
@@ -35,28 +36,29 @@ Key rules to emphasise:
 | Exercise 1: Incident intake & triage | 25 min + 10 min debrief |
 | Exercise 2: Incident resolution | 40 min + 10 min debrief |
 | Break | 10 min |
-| Exercise 3: Problem analysis + postmortem summary | 55 min + 10 min debrief |
-| Exercise 4: Request for Change | 35 min + 10 min debrief |
+| Exercise 3: Problem analysis & Change request | 80 min + 10 min debrief |
+| Exercise 4: Fixing the source code with AI (sample repo + model answer ready; timing still TBD) | TBD |
 | Closing discussion: where AI helps vs. doesn't | 10 min |
-| **Total** | **230 min** |
+| **Total (Exercises 1–3)** | **~195 min** |
 
 **Catch-up cards:** hand out `catch-up-cards.md` (Card A before
-Exercise 3, Card B before Exercise 4) so groups that fell behind can
-continue.
+Exercise 3, Card B before Part D of Exercise 3) so groups that fell
+behind can continue.
 
 **Pacing within exercises** (facilitator only; the exercise files show
 just the overall time box):
 
 - Exercise 2: Part A ~10 min, Part B ~15 min, Part C ~15 min
 - Exercise 3: Part A ~15 min, Part B ~10 min, Part C ~15 min, Part D
-  ~15 min
+  (Request for Change) ~35 min
 
 ## Ground truth (summary; full detail in `timeline.md`)
 
 - **Trigger:** `checkout-service v2.14.0`, deployed 09:58 UTC.
-- **Root cause:** N+1 query pattern (lazy-loaded associations replacing a
-  `JOIN FETCH`) **plus** a widened `@Transactional` scope that holds the
-  DB connection during remote inventory/payment calls. Avg connection hold
+- **Root cause:** N+1 query pattern (lazy-loaded EF Core navigation
+  properties replacing eager loading via `.Include()`) **plus** a widened
+  transaction scope that holds the DB connection during remote
+  inventory/payment calls. Avg connection hold
   time went from ~34ms to ~376ms, exhausting the 50-connection pool by
   ~10:04. Timeouts (504) → stacked service + front-end retries →
   payment-gateway traffic ~3.3–3.4x baseline → 429s above 300 req/min.
@@ -69,7 +71,7 @@ just the overall time box):
   participants and the AI deprioritise unrelated noise.
 - **Long-term solution (model answer):** RFC **W 2607 012** for
   `checkout-service v2.14.1`: re-introduce the refactor with a single
-  fetch (entity graph), narrow the transaction scope, harden the
+  fetch (eager loading), narrow the transaction scope, harden the
   payment client (exponential backoff + jitter, honour `Retry-After`,
   circuit breaker, `Idempotency-Key`), and add a query-count regression
   test with realistic cart sizes. Pool capacity review, CI load-test
@@ -159,9 +161,10 @@ flags it in the action entry, because it adds financial/customer risk.
 - *Messages (Part C):* Read a service desk message and a status-page
   update aloud. Any jargon, blame or overpromising left in?
 
-### Exercise 3: Problem analysis
+### Exercise 3: Problem analysis & Change request
 
-**Expected good outcome:** See `example-problem-record.md`. Look for:
+**Expected good outcome (Parts A–C):** See `example-problem-record.md`.
+Look for:
 - The N+1 explanation **and** the transaction-scope finding in the diff
   (the less obvious second cause; it explains why hold time rose so
   much). Groups that only find N+1 have an incomplete analysis.
@@ -199,30 +202,28 @@ flags it in the action entry, because it adds financial/customer risk.
   Ask in the debrief whether the AI found these without being told
   where to look.
 - A reasoned solution choice with clear RFC scope vs. follow-up actions.
-- **Part D (postmortem summary):** blameless framing ("the deploy
-  pipeline had no check for query regressions", not "a developer wrote a
-  bad query"). Quantified impact: ~5,760 failed/abandoned checkouts in
-  ~35 minutes, 7 duplicate charges (€ 612.40, refunded); at an average
-  order value of € 74.80, roughly € 430k of orders at risk. Action items
-  that match the problem record's follow-up table, each with an owner,
-  a date and a TopDesk reference. A management summary in business
-  terms that doesn't promise "never again".
 
-**Model management summary:**
-> On 7 July, a software update to our checkout made about 38% of checkouts
-> fail for roughly 35 minutes. About 5,760 checkouts did not complete
-> (≈ € 430k in orders at risk), and 7 customers were charged twice; they
-> have been refunded. Service was restored within 15 minutes of the
-> engineer picking up the incident by reverting the update. The analysis
-> found that the update used the database inefficiently, and that our
-> payment retry settings turned a slowdown into an outage. A change is
-> planned for 16 July to fix both, with extra automated checks so this
-> type of problem is caught before release.
+**Expected good outcome (Part D, RFC):** See
+`example-rfc-checkout-service.docx`. Look for:
+- General info filled in with correct references (P 2607 007, related
+  incident I 2607 041) and **no invented data** presented as fact.
+- Section 1 traceable to evidence (impact numbers, duplicate charges,
+  deploy freeze).
+- Clear split between section 2 (WHAT) and section 3 (HOW).
+- Concrete risks with mitigations, a specific rollback plan (back to
+  v2.13.4 via `kubectl rollout undo`, < 5 min, decision criteria), post-
+  deploy verification thresholds, and a deploy window outside peak hours.
+- A realistic WBS that includes a load test with production-like carts
+  and a DB/infra review.
+- Deliberate scope: pool resize, CI load-test stage, front-end retries and
+  the rate-limit increase are **not** in this RFC's WBS but are referenced
+  as separate actions.
 
-**Discussion prompts:**
+**Discussion prompts (Parts A–C):**
 - *Root cause (Part A):* Did the AI spot the N+1 pattern in the logged
   queries by itself, or only after you pointed it there? Did any group
-  find the `@Transactional` change, the second cause, without help?
+  find the widened transaction-scope change, the second cause, without
+  help?
 - *Root-cause statement (Part A):* Ask a group to read out their
   root-cause sentence. Is every claim backed by a log line, metric or
   code line? Does it blame a person or describe a system gap?
@@ -241,33 +242,8 @@ flags it in the action entry, because it adds financial/customer risk.
   the pool" or "ask for a higher rate limit" as *the* solution? Why is
   that a symptom fix? Compare two groups: what did they put in the RFC
   and what became a follow-up action?
-- *Postmortem (Part D):* Read a couple of AI-drafted action items aloud.
-  Are they specific and assigned, or generic ("improve testing")? Tighten
-  one together as a group. Which numbers or timestamps did you have to
-  correct?
-- *Management summary (Part D):* How does it differ from the problem
-  record in audience and tone? Did it leak technical jargon or promise
-  "never again"?
 
-### Exercise 4: Request for Change
-
-**Expected good outcome:** See `example-rfc-checkout-service.docx`. Look
-for:
-- General info filled in with correct references (P 2607 007, related
-  incident I 2607 041) and **no invented data** presented as fact.
-- Section 1 traceable to evidence (impact numbers, duplicate charges,
-  deploy freeze).
-- Clear split between section 2 (WHAT) and section 3 (HOW).
-- Concrete risks with mitigations, a specific rollback plan (back to
-  v2.13.4 via `kubectl rollout undo`, < 5 min, decision criteria), post-
-  deploy verification thresholds, and a deploy window outside peak hours.
-- A realistic WBS that includes a load test with production-like carts
-  and a DB/infra review.
-- Deliberate scope: pool resize, CI load-test stage, front-end retries and
-  the rate-limit increase are **not** in this RFC's WBS but are referenced
-  as separate actions.
-
-**Discussion prompts:**
+**Discussion prompts (Part D, RFC):**
 - *Drafting (step 1):* Did anyone have the AI fill the `.docx` directly?
   How well did it keep the layout, and what did you have to fix by hand?
   What did the AI invent (RFC numbers, dates, names, hours, test
@@ -284,10 +260,29 @@ for:
 - *CAB review (step 5):* Run the "sceptical CAB member" prompt live on
   one RFC and discuss the questions it raises. Would you approve it?
 
+### Exercise 4: Fixing the source code with AI (draft)
+
+The sample source repo exists at `checkout-service-incident-sourcecode/`
+(ASP.NET Core / EF Core, C#; reproduces the PR #4821 bug — buggy
+`FindAsync` + lazy-loaded `CartItem.Product`, and a transaction scope
+wrapping the inventory/payment calls in `CheckoutService.StartAsync`). It
+builds and tests clean with `dotnet build` / `dotnet test` (1 passed — no
+comments or notes in the code point out what's wrong).
+
+A model-answer diff is now available at `example-fix-diff.md`, covering
+RFC options A (eager loading + narrowed transaction), B (hardened payment
+client), and C (completed query-count regression test), with notes on
+where a participant's AI-assisted diff can reasonably differ.
+
+**Still to do before running this exercise:**
+- Pilot the exercise end-to-end with an AI coding assistant, then fill in:
+  expected good outcome, discussion prompts, and the timing row in
+  "Overall timing" above.
+
 ## Closing discussion: where AI helps vs. doesn't
 
 - **Helps:** quickly summarising noisy data, drafting under time pressure
-  (Teams posts, TopDesk entries, postmortems, RFC sections), explaining unfamiliar
+  (Teams posts, TopDesk entries, RFC sections), explaining unfamiliar
   technical concepts, generating alternative hypotheses, turning analysis
   into structured documents, critical review ("act as a CAB member").
 - **Doesn't replace:** checking facts and numbers against real evidence;

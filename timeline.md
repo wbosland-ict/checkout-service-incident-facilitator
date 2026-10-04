@@ -7,11 +7,11 @@ All times UTC.
 | Time | Event |
 |---|---|
 | 2026-07-07 09:41 | PR #4821 merged (1 approval; unit/integration tests green; no performance stage in CI). |
-| 09:58 | CI/CD deploys `checkout-service v2.14.0`. Changelog: "Refactored cart items retrieval to use lazy-loaded associations (ORM), removed manual `JOIN FETCH` query." |
-| 10:00–10:02 | New code path live. Lazy loading causes an **N+1 query problem**: per cart with *n* items, 1 query for the cart + *n* queries for products instead of 1 joined query. In addition, `@Transactional` was moved to the whole `start()` method, so the DB connection is now **held during the inventory and payment-gateway calls**. |
+| 09:58 | CI/CD deploys `checkout-service v2.14.0`. Changelog: "Refactored cart items retrieval to use lazy-loaded navigation properties (EF Core), removed manual eager-loading (`.Include()`) query." |
+| 10:00–10:02 | New code path live. Lazy loading causes an **N+1 query problem**: per cart with *n* items, 1 query for the cart + *n* queries for products instead of 1 joined query. In addition, the transaction scope was widened to cover the whole `StartAsync()` method, so the DB connection is now **held during the inventory and payment-gateway calls**. |
 | 10:02 | Average connection hold time rises from ~34ms to ~140ms (→ ~376ms by 10:20). First customer calls reach the service desk. |
 | 10:03–10:04 | DB connection pool (`max_pool_size=50`) climbs from baseline ~20 to 50 (100%). |
-| 10:04–10:05 | Requests queue for a free connection; waits exceed the 5000ms timeout → `ConnectionPoolTimeoutException`, HTTP 504. |
+| 10:04–10:05 | Requests queue for a free connection; waits exceed the 5000ms timeout → `NpgsqlTimeoutException`, HTTP 504. |
 | 10:05 onwards | Service retries (3 attempts, fixed 200ms, also on 429) plus front-end retries (3 attempts on 502/504) multiply payment-gateway traffic to ~3.3–3.4x baseline. Rate limit (300 req/min) breached → `429 Too Many Requests`. |
 | 10:06 | Grafana alert ALT-10023841 (latency/error rate, critical) posted to Teams *SRE Alerts*. |
 | 10:07 | ALT-10023845 (DB pool saturation, critical). |
@@ -39,19 +39,21 @@ All times UTC.
 | 15:05 | DB/infra: Postgres `max_connections=200`; raising the pool without fixing queries moves the bottleneck to DB CPU. |
 | 15:30 | Payments: rate limit can be raised to 600 req/min (2 weeks, extra cost); recommends idempotency keys + backoff. |
 | 2026-07-08 09:30 | Finance reconciliation: **7 duplicate charges** (€ 612.40), refunded. Caused by retrying a charge after a client-side timeout without an `Idempotency-Key`. |
-| 07-08 | Engineer picks up the problem (**Exercise 3**): root cause, contributing factors, known error, solution options. Status → *Known error* → *Solution proposed*. |
+| 07-08 | Engineer picks up the problem (**Exercise 3, Parts A–C**): root cause, contributing factors, known error, solution options. Status → *Known error* → *Solution proposed*. |
 
 ## Change phase: W 2607 012
 
 | Time | Event |
 |---|---|
-| 2026-07-09 | Engineer submits RFC `W 2607 012` (**Exercise 4**) for `checkout-service v2.14.1`, linked to P 2607 007 and I 2607 041. |
+| 2026-07-09 | Engineer submits RFC `W 2607 012` (**Exercise 3, Part D**) for `checkout-service v2.14.1`, linked to P 2607 007 and I 2607 041. |
 | target 07-16 | Desired completion: before "saved carts" (07-21) and the back-to-school campaign (August). |
+| TBD | Engineer implements the approved change in the source code
+  (**Exercise 4, draft** — not yet runnable; needs a sample source repo). |
 
 ## Root cause (single sentence)
 
 `checkout-service v2.14.0` replaced a single joined query with lazy-loaded
-ORM associations (an N+1 query pattern) and widened the DB transaction to
+EF Core navigation properties (an N+1 query pattern) and widened the DB transaction to
 include remote inventory and payment calls. This made connections be held
 ~10x longer, which exhausted the 50-connection pool under normal traffic.
 The resulting timeouts triggered stacked retries that breached
@@ -63,7 +65,7 @@ payment-gateway's rate limit and collapsed the checkout success rate.
    have 1–2 items vs. a production average of 4.6 (p95 11), so the N+1
    pattern was invisible in tests.
 2. **Transaction scope**: remote calls inside a DB transaction (introduced
-   to make lazy loading work with `open_in_view: false`).
+   to make lazy loading work with `lazy_loading_proxies_enabled: true`).
 3. **Pool sizing**: `max_pool_size=50` sized for ~350 req/min at the
    2026-04 capacity review; traffic now ~460 req/min (+40%) and forecast
    ~700 req/min for Black Friday (41/50 connections even on v2.13.4).

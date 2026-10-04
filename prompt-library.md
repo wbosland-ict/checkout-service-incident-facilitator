@@ -61,20 +61,6 @@ your own (sanitised) data. These are starting points, not scripts.
   mitigation, escalation, matching the style of this runbook. [paste
   runbook]"
 
-## Problem: postmortem summary
-
-- "Turn this problem record and timeline into a one-page blameless
-  postmortem: summary, impact, timeline, root cause, contributing factors,
-  what went well/poorly, action items. Describe system and process gaps,
-  not people. [paste problem record + timeline]"
-- "Rewrite this action item to be specific, measurable and assignable:
-  '[vague action item]'"
-- "Rephrase this sentence to remove implied individual blame while keeping
-  it factual: '[sentence]'"
-- "Summarise this postmortem for [management / service desk / engineering]
-  in [N] sentences, focusing on [business impact / customer symptoms /
-  technical detail]."
-
 ## Change: Request for Change
 
 - "Here is my TopDesk problem record and the sections of our RFC template.
@@ -90,6 +76,26 @@ your own (sanitised) data. These are starting points, not scripts.
   testing, delivery & acceptance, rework."
 - "Review this RFC as a sceptical Change Advisory Board member. List the
   top 5 questions you would ask before approving it."
+
+## Change: implementing the fix (draft, Exercise 4)
+
+- "Here are sections 2 and 3 of an approved RFC. Propose an implementation
+  plan against this codebase before writing any code. [paste RFC
+  sections]"
+- "Rewrite this repository method to fetch related entities in a single
+  query instead of lazy-loaded navigation properties. Explain the
+  trade-offs of `.Include()`/`.ThenInclude()` vs. a split query vs. a
+  projection here."
+- "Narrow this transaction scope so the database connection isn't
+  held during remote calls. What has to change for lazy loading to still
+  work?"
+- "Add exponential backoff with jitter to this client, stop retrying on
+  429 unless `Retry-After` allows it, and add a circuit breaker. Keep the
+  existing method signatures."
+- "Write a test that fails if this code path issues more than one SQL
+  query for N related items."
+- "Review this diff as a strict code reviewer: does it match this RFC
+  scope exactly? Any risk it introduces that isn't mentioned in the RFC?"
 
 ## Habits worth modelling in every phase
 

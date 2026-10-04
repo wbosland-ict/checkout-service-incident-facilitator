@@ -9,7 +9,8 @@ answer.
 | Card | Hand out at the start of |
 |---|---|
 | A: Incident outcome | Exercise 3: Problem analysis |
-| B: Problem outcome | Exercise 4: Request for Change |
+| B: Problem outcome | Exercise 3, Part D: Request for Change |
+| C: Change outcome | Exercise 4 (draft): Fixing the source code |
 
 ---
 
@@ -34,9 +35,10 @@ answer.
 ## Card B: Problem outcome (P 2607 007)
 
 - **Root cause:** v2.14.0 replaced a single joined query with lazy-loaded
-  ORM associations (**N+1 queries**) **and** widened the DB transaction to
-  include the remote inventory and payment calls. Connections were held
-  ~10x longer, which exhausted the 50-connection pool.
+  EF Core navigation properties (**N+1 queries**) **and** widened the DB
+  transaction to include the remote inventory and payment calls.
+  Connections were held ~10x longer, which exhausted the 50-connection
+  pool.
 - **Amplifiers:** fixed-interval retries (also on 429) plus front-end
   retries tripled payment-gateway traffic → rate limit; no idempotency
   key → **7 duplicate charges** (€ 612.40, refunded).
@@ -51,3 +53,23 @@ answer.
   (DB/Infra, by 2026-07-31), CI load-test stage (Platform team, by
   2026-09-30), front-end retry alignment (Web team, by 2026-08-15),
   runbook section (SRE, by 2026-07-17).
+
+---
+
+## Card C: Change outcome (W 2607 012) — draft
+
+- **Approved RFC `W 2607 012`** for `checkout-service v2.14.1`: this is
+  what Exercise 4 implements in the source code. Scope is the same as
+  Card B's "In the RFC" bullet; nothing else.
+- **What to build:** a single-query fetch for cart items + products
+  (eager loading via `.Include()`/`.ThenInclude()`, or a split query), a
+  transaction scope narrowed to exclude the inventory/payment remote
+  calls, a
+  payment client with backoff + jitter + `Retry-After` handling +
+  circuit breaker + `Idempotency-Key`, and a query-count regression test
+  with realistic cart sizes (4–11 items).
+- **Out of scope here:** pool resizing, CI load-test stage, front-end
+  retry alignment, and the rate-limit increase — these stay separate
+  follow-up actions, not code changes in this exercise.
+- **Note:** Exercise 4 is a draft; this card will need updating once the
+  sample source repo and model-answer diff are added.

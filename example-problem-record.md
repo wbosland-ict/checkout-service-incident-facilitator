@@ -48,10 +48,10 @@ and payment calls. Average connection hold time rose from ~34ms to
 | # | Link | Evidence |
 |---|---|---|
 | 1 | v2.14.0 deployed 09:58 | deploy-history.md; checkout-service.log 09:58:02–09:58:47 |
-| 2 | N+1 queries: 1 + n queries per cart | checkout-service.log: before deploy (v2.13.4, 09:40–09:57), every checkout runs 1 joined query regardless of cart size (reqs 8c05, 8c31, 8c77 with 11 items, 8ca4, 8e40); after deploy, req 8e73 runs 1 cart + 1 cart_item + 4 product queries, req 8f02 runs 6 product queries, req 8f47 runs 9 product queries (`SELECT p.* FROM product p WHERE p.id = <id>`, a different product ID each time); pr-4821-diff.md (`FetchType.LAZY`, `JOIN FETCH` removed) |
-| 3 | Connection held during remote calls | pr-4821-diff.md: `@Transactional` on `start()` wrapping `inventoryClient.reserve` and `paymentClient.charge` |
+| 2 | N+1 queries: 1 + n queries per cart | checkout-service.log: before deploy (v2.13.4, 09:40–09:57), every checkout runs 1 joined query regardless of cart size (reqs 8c05, 8c31, 8c77 with 11 items, 8ca4, 8e40); after deploy, req 8e73 runs 1 cart + 1 cart_item + 4 product queries, req 8f02 runs 6 product queries, req 8f47 runs 9 product queries (`SELECT p.* FROM product p WHERE p.id = <id>`, a different product ID each time); pr-4821-diff.md (eager-loading `.Include()` removed, `virtual` lazy-loaded navigation property added) |
+| 3 | Connection held during remote calls | pr-4821-diff.md: transaction scope widened around `StartAsync()`, wrapping `inventoryClient.Reserve` and `paymentClient.Charge` |
 | 4 | Hold time ↑ → pool exhausted | db_connection_pool.csv: hold 34→376ms, active 21→50 by 10:04, queue up to 41 |
-| 5 | Pool timeouts → 504s | log 10:04:10 `ConnectionPoolTimeoutException`, `status=504 duration_ms=5008` |
+| 5 | Pool timeouts → 504s | log 10:04:10 `NpgsqlTimeoutException`, `status=504 duration_ms=5008` |
 | 6 | Stacked retries multiply traffic | config: service retries 3× fixed 200ms incl. 429, front-end retries 3× on 502/504; log `retry.scheduled`; payment_gateway_calls.csv 181→~600 req/min (3.3–3.4x) with flat inbound traffic (~460 req/min) |
 | 7 | Rate limit breached → 429s | payment-gateway.log "rate limit exceeded: 300 req/min"; 85–91 429s/min |
 | 8 | Checkout failures | success rate 99.5% → 62.4% (payment_gateway_calls.csv, log 10:20:00) |
@@ -61,8 +61,8 @@ and payment calls. Average connection hold time rose from ~34ms to
 
 1. No performance / query-count check in CI; test carts have 1–2 items vs.
    production average 4.6 (p95 11).
-2. Transaction scope widened to make lazy loading work with
-   `open_in_view: false`; not spotted in single-reviewer code review.
+2. Transaction scope widened to make lazy loading work while keeping
+   `lazy_loading_proxies_enabled: true`; not spotted in single-reviewer code review.
 3. Pool sized at 50 for ~350 req/min (April); traffic now ~460 req/min.
 4. Retry policy: fixed backoff, no jitter, retries on 429, no circuit
    breaker; front-end retries on top of service retries.
@@ -91,7 +91,7 @@ charges with Finance.
 
 | Option | Description | Pros | Cons / risks | Effort |
 |---|---|---|---|---|
-| A | Re-release refactor with single fetch (`@EntityGraph`) + narrow transaction (read-only tx for cart, remote calls outside) | Removes root cause; unblocks saved carts | Needs careful testing of lazy-loading edge cases | M |
+| A | Re-release refactor with eager loading (`.Include()`/`.ThenInclude()`) + narrow transaction (read-only for cart, remote calls outside) | Removes root cause; unblocks saved carts | Needs careful testing of lazy-loading edge cases | M |
 | B | Payment client resilience: exp. backoff + jitter, honour `Retry-After`, max 1 retry on 429, circuit breaker, `Idempotency-Key` | Prevents retry storms and duplicate charges for *any* slowdown | Behaviour change on payment path; needs payments review | M |
 | C | Query-count regression test with realistic carts (4–11 items) | Catches the same class of defect before production | Test maintenance | S |
 | D | Increase pool 50 → 80 | Headroom for growth | Masks inefficiency; moves bottleneck to DB CPU; needs DB/infra capacity review | S |
