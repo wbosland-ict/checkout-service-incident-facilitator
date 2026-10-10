@@ -66,8 +66,8 @@ By the end of this workshop, participants will be able to:
     (Parts A–C) and Request for Change (Part D)
   - `exercises/exercise-4-fix-with-ai.md`: implementing the approved
     change in the source code (timing still being piloted)
-- **`checkout-service-incident-sourcecode/`**: runnable ASP.NET Core / EF
-  Core (C#) sample reproducing the PR #4821 bug, used in Exercise 4. See
+- **`checkout-service-incident-sourcecode/`**: runnable .NET 9 / EF
+  Core (C#) sample (no ASP.NET Core host) reproducing the PR #4821 bug, used in Exercise 4. See
   its own `README.md` for build/test instructions and how it maps to the
   exercise's tasks.
 - **`checkout-service-incident-files/`**: synthetic evidence for participants
