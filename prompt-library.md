@@ -66,8 +66,8 @@ your own (sanitised) data. These are starting points, not scripts.
 - "Here is my TopDesk problem record and the sections of our RFC template.
   Draft the text for each section. Keep section 2 about WHAT changes and
   section 3 about HOW. [paste problem record + section list]"
-- "Fill in this copy of rfc-template.docx with the drafted content. Keep
-  the layout; put text in the empty cells under each heading."
+- "Fill in rfc-template.docx with the drafted content and save it as a new
+  file. Keep the layout; put text in the empty cells under each heading."
 - "Rewrite this risk section so each risk has a likelihood, impact,
   mitigation and owner. Add a concrete rollback plan and post-deploy
   verification criteria."
