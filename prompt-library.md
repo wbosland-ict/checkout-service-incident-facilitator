@@ -79,9 +79,8 @@ your own (sanitised) data. These are starting points, not scripts.
 
 ## Change: implementing the fix (Exercise 4)
 
-- "Here are sections 2 and 3 of an approved RFC. Propose an implementation
-  plan against this codebase before writing any code. [paste RFC
-  sections]"
+- "Read sections 2 and 3 of my approved RFC in [path to your RFC]. Propose
+  an implementation plan against this codebase before writing any code."
 - "Write a test that fails if this code path issues more than one SQL
   query for N related items. Don't change the production code yet — I
   want to see the test fail first."

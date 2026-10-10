@@ -75,7 +75,8 @@ answer.
 - **Start with the test.** Write the query-count regression test first
   and see it fail against the unchanged code, then fix. The fixtures you
   need (`TestDbContextFactory`, `QueryCountingInterceptor`,
-  `CartFixtures`) are already in the test project.
+  `CartFixtures`, and `FakeHttpMessageHandler`/`DownstreamFakes` for the
+  inventory and payment-gateway calls) are already in the test project.
 - **Out of scope here:** pool resizing, CI load-test stage, front-end
   retry alignment, and the rate-limit increase — these stay separate
   follow-up actions, not code changes in this exercise.

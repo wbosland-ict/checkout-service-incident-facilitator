@@ -267,7 +267,10 @@ The sample source repo is at `checkout-service-incident-sourcecode/`
 lazy-loaded `CartItem.Product`, a transaction scope wrapping the
 inventory/payment calls in `CheckoutService.StartAsync`, and a
 `PaymentClient` implementing exactly the broken retry policy from
-`checkout-service-config.yaml`). It builds and tests clean with
+`checkout-service-config.yaml`). The inventory and payment clients are
+real typed `HttpClient`s; in the tests they talk to fake downstream
+services (`FakeHttpMessageHandler`, `DownstreamFakes`), and `OrderWriter`
+persists the order through EF Core. It builds and tests clean with
 `dotnet build` / `dotnet test` (**1 passed** — no comments or notes in
 the code point out what's wrong).
 
@@ -306,9 +309,11 @@ suite shows **4 passed**.
   on its own, or only after you pointed at them?
 - Where did the AI exceed the RFC scope? Who caught it, and how — by
   reading the diff, or because something broke?
-- `SendChargeRequestAsync` is a stub that never fails, so none of the new
-  retry logic is actually exercised. Did anyone flag that the hardening
-  is untested? What would you want before shipping it?
+- The payment client talks HTTP to a fake payment-gateway in the tests
+  (`FakeHttpMessageHandler`), so the new retry logic *can* be exercised.
+  Did anyone write tests for a 429 with and without `Retry-After`, or a
+  timeout followed by a retry with the same `Idempotency-Key`? If not, the
+  hardening is untested. What would you want before shipping it?
 - Compare two groups' `CartRepository` fixes. Joined query, split query,
   or projection — can each group defend their choice on round trips vs.
   payload size vs. change tracking?

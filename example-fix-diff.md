@@ -78,141 +78,291 @@ payment call is generated, one per checkout attempt.
 ## B — Harden the payment client (`Payment/PaymentClient.cs`)
 
 The starter code already retries, but exactly as
-`problem-evidence/checkout-service-config.yaml` describes it: 3 attempts,
-**fixed** 200 ms delay, **no jitter**, retrying on 429 as readily as on a
-5xx, no circuit breaker, and no idempotency key. That is the retry policy
-that turned a DB slowdown into a payment-gateway rate-limit breach and 7
+`problem-evidence/checkout-service-config.yaml` describes it (bound via
+`PaymentGatewayOptions`): 3 attempts, a **fixed** 200 ms delay, **no
+jitter**, retrying on 429 as readily as on a 5xx, no circuit breaker, and
+no `Idempotency-Key` on `POST /v1/charge`. That is the retry policy that
+turned a DB slowdown into a payment-gateway rate-limit breach and 7
 duplicate charges, so this is a change to existing behaviour, not new
 code on a blank stub.
 
 The fix keeps the same shape and attempt budget, but: backs off
-exponentially with jitter, only retries a 429 when the gateway actually
-supplied a `Retry-After` (and then waits exactly that long), trips a
-circuit breaker after repeated failures, and threads an
-`Idempotency-Key` through to the charge request.
+exponentially with jitter, only retries a 429 when the gateway supplied a
+short `Retry-After` (and then waits exactly that long), trips a circuit
+breaker after repeated failures, and sends an `Idempotency-Key` header on
+every charge attempt.
+
+`PaymentClient` is registered as a typed `HttpClient`
+(`AddHttpClient<IPaymentClient, PaymentClient>()`), which makes it
+**transient**: breaker state kept in instance fields would reset on every
+checkout and never trip. The breaker therefore lives in its own singleton,
+`PaymentGatewayCircuitBreaker` (new file, shown after the diff).
 
 ```diff
+--- a/src/ShopFast.Checkout/DependencyInjection/CheckoutServiceCollectionExtensions.cs
++++ b/src/ShopFast.Checkout/DependencyInjection/CheckoutServiceCollectionExtensions.cs
+@@ -18,6 +18,7 @@ public static class CheckoutServiceCollectionExtensions
+         services.Configure<PaymentGatewayOptions>(configuration.GetSection(PaymentGatewayOptions.SectionName));
+ 
+         services.TryAddSingleton(TimeProvider.System);
++        services.AddSingleton<PaymentGatewayCircuitBreaker>();
+ 
+         services.AddHttpClient<IInventoryClient, InventoryClient>();
+         services.AddHttpClient<IPaymentClient, PaymentClient>();
+--- a/src/ShopFast.Checkout/Payment/PaymentClient.cs
++++ b/src/ShopFast.Checkout/Payment/PaymentClient.cs
+@@ -14,11 +14,21 @@ public record PaymentResult(string ChargeId, decimal Amount, string Currency);
  public class PaymentGatewayException : Exception
  {
      public int StatusCode { get; }
 +    public TimeSpan? RetryAfter { get; }
-
+ 
 -    public PaymentGatewayException(int statusCode, string message)
 +    public PaymentGatewayException(int statusCode, string message, TimeSpan? retryAfter = null)
          : base(message)
      {
          StatusCode = statusCode;
 +        RetryAfter = retryAfter;
-     }
- }
-
-@@
++    }
++}
++
 +public class PaymentGatewayCircuitOpenException : Exception
 +{
 +    public PaymentGatewayCircuitOpenException(string message)
 +        : base(message)
 +    {
-+    }
-+}
-+
+     }
+ }
+ 
+@@ -43,22 +53,27 @@ public class PaymentDeclinedException : Exception
+ 
  public interface IPaymentClient
  {
 -    Task<PaymentResult> ChargeAsync(ReservationResult reservation, IReadOnlyList<LineItem> lines);
 +    Task<PaymentResult> ChargeAsync(ReservationResult reservation, IReadOnlyList<LineItem> lines, string idempotencyKey);
  }
-
+ 
  public class PaymentClient : IPaymentClient
  {
-     private const int MaxAttempts = 3;
--    private const int BackoffDelayMs = 200;
-+    private const int CircuitBreakerFailureThreshold = 5;
-+    private static readonly TimeSpan BaseDelay = TimeSpan.FromMilliseconds(200);
-+    private static readonly TimeSpan CircuitOpenDuration = TimeSpan.FromSeconds(30);
-
--    public async Task<PaymentResult> ChargeAsync(ReservationResult reservation, IReadOnlyList<LineItem> lines)
-+    private int _consecutiveFailures;
-+    private DateTimeOffset _circuitOpenUntil = DateTimeOffset.MinValue;
++    private static readonly TimeSpan MaxHonouredRetryAfter = TimeSpan.FromSeconds(2);
 +
-+    public async Task<PaymentResult> ChargeAsync(ReservationResult reservation, IReadOnlyList<LineItem> lines, string idempotencyKey)
+     private readonly HttpClient _httpClient;
+     private readonly PaymentGatewayOptions _options;
++    private readonly PaymentGatewayCircuitBreaker _circuitBreaker;
+     private readonly ILogger<PaymentClient> _logger;
+ 
+     public PaymentClient(
+         HttpClient httpClient,
+         IOptions<PaymentGatewayOptions> options,
++        PaymentGatewayCircuitBreaker circuitBreaker,
+         ILogger<PaymentClient> logger)
      {
-+        if (DateTimeOffset.UtcNow < _circuitOpenUntil)
+         _httpClient = httpClient;
+         _options = options.Value;
++        _circuitBreaker = circuitBreaker;
+         _logger = logger;
+ 
+         _httpClient.BaseAddress = _options.BaseUrl.WithTrailingSlash();
+@@ -66,43 +81,76 @@ public class PaymentClient : IPaymentClient
+         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+     }
+ 
+-    public async Task<PaymentResult> ChargeAsync(ReservationResult reservation, IReadOnlyList<LineItem> lines)
++    public async Task<PaymentResult> ChargeAsync(
++        ReservationResult reservation, IReadOnlyList<LineItem> lines, string idempotencyKey)
+     {
++        if (_circuitBreaker.IsOpen)
 +        {
 +            throw new PaymentGatewayCircuitOpenException(
 +                "Payment gateway circuit breaker is open; not sending further charge requests yet.");
 +        }
 +
-         for (var attempt = 1; attempt <= MaxAttempts; attempt++)
+         var maxAttempts = _options.Retry.MaxAttempts;
+ 
+         for (var attempt = 1; attempt <= maxAttempts; attempt++)
          {
              try
              {
--                return await SendChargeRequestAsync(reservation, lines);
-+                var result = await SendChargeRequestAsync(reservation, lines, idempotencyKey);
-+                _consecutiveFailures = 0;
+-                return await SendChargeRequestAsync(reservation, lines, attempt);
++                var result = await SendChargeRequestAsync(reservation, lines, idempotencyKey, attempt);
++                _circuitBreaker.RecordSuccess();
 +                return result;
              }
-             catch (PaymentGatewayTimeoutException) when (attempt < MaxAttempts)
+-            catch (PaymentGatewayTimeoutException) when (attempt < maxAttempts)
++            catch (PaymentGatewayTimeoutException)
              {
--                await Task.Delay(BackoffDelayMs);
-+                RecordFailure();
-+                await Task.Delay(ComputeBackoffWithJitter(attempt));
+-                await DelayBeforeRetryAsync(attempt + 1);
++                _circuitBreaker.RecordFailure();
++                if (attempt == maxAttempts)
++                {
++                    throw;
++                }
++
++                await DelayBeforeRetryAsync(attempt + 1, ComputeBackoffWithJitter(attempt));
              }
--            catch (PaymentGatewayException ex) when (attempt < MaxAttempts && IsRetryable(ex.StatusCode))
-+            catch (PaymentGatewayException ex) when (attempt < MaxAttempts && IsRetryable(ex))
+-            catch (PaymentGatewayException ex) when (attempt < maxAttempts && IsRetryable(ex.StatusCode))
++            catch (PaymentGatewayException ex) when (ex.StatusCode == 429 || ex.StatusCode >= 500)
              {
--                await Task.Delay(BackoffDelayMs);
-+                RecordFailure();
-+                await Task.Delay(ex.RetryAfter ?? ComputeBackoffWithJitter(attempt));
+-                await DelayBeforeRetryAsync(attempt + 1);
++                _circuitBreaker.RecordFailure();
++                if (attempt == maxAttempts || !IsRetryable(ex))
++                {
++                    throw;
++                }
++
++                await DelayBeforeRetryAsync(attempt + 1, ex.RetryAfter ?? ComputeBackoffWithJitter(attempt));
              }
          }
-
-+        RecordFailure();
-         throw new PaymentGatewayException(502, $"Payment gateway did not succeed after {MaxAttempts} attempts.");
+ 
+         throw new PaymentGatewayException(502, $"Payment gateway did not succeed after {maxAttempts} attempts.");
      }
-
+ 
 -    private static bool IsRetryable(int statusCode)
 +    private static bool IsRetryable(PaymentGatewayException ex)
 +    {
 +        if (ex.StatusCode == 429)
 +        {
-+            return ex.RetryAfter is not null;
++            return ex.RetryAfter is { } retryAfter && retryAfter <= MaxHonouredRetryAfter;
 +        }
 +
 +        return ex.StatusCode >= 500;
 +    }
 +
-+    private void RecordFailure()
-+    {
-+        _consecutiveFailures++;
-+        if (_consecutiveFailures >= CircuitBreakerFailureThreshold)
-+        {
-+            _circuitOpenUntil = DateTimeOffset.UtcNow.Add(CircuitOpenDuration);
-+        }
-+    }
-+
-+    private static TimeSpan ComputeBackoffWithJitter(int attempt)
++    private TimeSpan ComputeBackoffWithJitter(int attempt)
      {
 -        return statusCode == 429 || statusCode >= 500;
-+        var exponential = BaseDelay * Math.Pow(2, attempt - 1);
-+        var jitter = Random.Shared.NextDouble() * exponential.TotalMilliseconds * 0.2;
-+        return exponential + TimeSpan.FromMilliseconds(jitter);
++        var exponentialMs = _options.Retry.BackoffDelayMs * Math.Pow(2, attempt - 1);
++        var jitterMs = Random.Shared.NextDouble() * exponentialMs * 0.2;
++        return TimeSpan.FromMilliseconds(exponentialMs + jitterMs);
      }
-
--    private async Task<PaymentResult> SendChargeRequestAsync(ReservationResult reservation, IReadOnlyList<LineItem> lines)
-+    private async Task<PaymentResult> SendChargeRequestAsync(ReservationResult reservation, IReadOnlyList<LineItem> lines, string idempotencyKey)
+ 
+-    private async Task DelayBeforeRetryAsync(int nextAttempt)
++    private async Task DelayBeforeRetryAsync(int nextAttempt, TimeSpan delay)
      {
-         await Task.Delay(1);
-         return new PaymentResult(Guid.NewGuid().ToString("N"));
+-        var delayMs = _options.Retry.BackoffDelayMs;
+-        _logger.LogInformation("retry.scheduled attempt={Attempt} delay_ms={DelayMs}", nextAttempt, delayMs);
+-        await Task.Delay(delayMs);
++        _logger.LogInformation(
++            "retry.scheduled attempt={Attempt} delay_ms={DelayMs}", nextAttempt, (long)delay.TotalMilliseconds);
++        await Task.Delay(delay);
      }
- }
+ 
+     private async Task<PaymentResult> SendChargeRequestAsync(
+-        ReservationResult reservation, IReadOnlyList<LineItem> lines, int attempt)
++        ReservationResult reservation, IReadOnlyList<LineItem> lines, string idempotencyKey, int attempt)
+     {
+         var request = new ChargeRequest(
+             AmountMinor: lines.Sum(l => Money.ToMinorUnits(l.Price) * l.Quantity),
+@@ -119,8 +167,13 @@ public class PaymentClient : IPaymentClient
+ 
+         try
+         {
+-            using var response = await _httpClient.PostAsJsonAsync(
+-                "charge", request, DownstreamJson.Options, timeoutCts.Token);
++            using var message = new HttpRequestMessage(HttpMethod.Post, "charge")
++            {
++                Content = JsonContent.Create(request, options: DownstreamJson.Options),
++            };
++            message.Headers.Add("Idempotency-Key", idempotencyKey);
++
++            using var response = await _httpClient.SendAsync(message, timeoutCts.Token);
+ 
+             var status = (int)response.StatusCode;
+ 
+@@ -151,7 +204,9 @@ public class PaymentClient : IPaymentClient
+             }
+ 
+             throw new PaymentGatewayException(
+-                status, error?.Message ?? $"Payment gateway returned HTTP {status} ({response.ReasonPhrase}).");
++                status,
++                error?.Message ?? $"Payment gateway returned HTTP {status} ({response.ReasonPhrase}).",
++                response.Headers.RetryAfter?.Delta);
+         }
+         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+         {
+--- a/tests/ShopFast.Checkout.Tests/Fixtures/DownstreamFakes.cs
++++ b/tests/ShopFast.Checkout.Tests/Fixtures/DownstreamFakes.cs
+@@ -49,11 +49,14 @@ public static class DownstreamFakes
+     }
+ 
+     public static PaymentClient CreatePaymentClient(
+-        HttpMessageHandler handler, PaymentGatewayOptions? options = null)
++        HttpMessageHandler handler,
++        PaymentGatewayOptions? options = null,
++        PaymentGatewayCircuitBreaker? circuitBreaker = null)
+     {
+         return new PaymentClient(
+             new HttpClient(handler),
+             Options.Create(options ?? new PaymentGatewayOptions { ApiKey = "test-api-key" }),
++            circuitBreaker ?? new PaymentGatewayCircuitBreaker(TimeProvider.System),
+             NullLogger<PaymentClient>.Instance);
+     }
+ 
 ```
 
-`SendChargeRequestAsync` is still a stub that never throws, so none of
-this retry logic actually fires in the sample repo — the point is the
-policy, not the transport. A participant who notices that and says "this
-is untested behaviour, I'd want a fake gateway that returns 429 with and
-without `Retry-After`" is making exactly the right observation; the
-exercise's "watch out for" list calls out tests that look safe but prove
-nothing.
+New file `Payment/PaymentGatewayCircuitBreaker.cs`:
+
+```csharp
+namespace ShopFast.Checkout.Payment;
+
+public class PaymentGatewayCircuitBreaker
+{
+    private const int FailureThreshold = 5;
+    private static readonly TimeSpan OpenDuration = TimeSpan.FromSeconds(30);
+
+    private readonly TimeProvider _timeProvider;
+    private readonly object _lock = new();
+    private int _consecutiveFailures;
+    private DateTimeOffset _openUntil = DateTimeOffset.MinValue;
+
+    public PaymentGatewayCircuitBreaker(TimeProvider timeProvider)
+    {
+        _timeProvider = timeProvider;
+    }
+
+    public bool IsOpen
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _timeProvider.GetUtcNow() < _openUntil;
+            }
+        }
+    }
+
+    public void RecordSuccess()
+    {
+        lock (_lock)
+        {
+            _consecutiveFailures = 0;
+        }
+    }
+
+    public void RecordFailure()
+    {
+        lock (_lock)
+        {
+            _consecutiveFailures++;
+            if (_consecutiveFailures >= FailureThreshold)
+            {
+                _openUntil = _timeProvider.GetUtcNow().Add(OpenDuration);
+                _consecutiveFailures = 0;
+            }
+        }
+    }
+}
+```
+
+The tests talk to a fake payment-gateway (`FakeHttpMessageHandler` in
+`tests/ShopFast.Checkout.Tests/Fixtures/`), so this retry logic *can* be
+exercised: a 429 without `Retry-After` should produce exactly one request,
+a 429 with `Retry-After: 1` a second request carrying the **same**
+`Idempotency-Key`, and five consecutive failures should open the breaker.
+The model answer was checked against those three cases. A participant who
+writes such tests, or who points out that the hardening is otherwise
+untested, is making exactly the right observation; the exercise's "watch
+out for" list calls out tests that look safe but prove nothing.
 
 ## C — Query-count regression test (new file:
 `tests/ShopFast.Checkout.Tests/QueryCountRegressionTests.cs`)
@@ -311,7 +461,11 @@ dotnet test
   idempotency key were. A diff that drops to 1 attempt "to be safe" is
   over-correcting and should be challenged.
 - Where the `Idempotency-Key` is generated — here `CheckoutService` makes
-  one per checkout attempt and passes it down. Generating it inside
-  `PaymentClient` would be wrong (a retry at a higher level would produce
-  a fresh key and re-enable double charges); that's worth catching if a
-  group does it.
+  one per checkout attempt and passes it down, so every retry inside
+  `PaymentClient` reuses it. That is what stops the duplicate charges
+  from this incident. Generating a fresh key per attempt inside the
+  retry loop would be wrong and is worth catching. Note the limit: a
+  retry by the web/app front-end (on 502/504) starts a new checkout
+  attempt and gets a new key, so it is not covered. Closing that gap
+  needs a key supplied by the front-end (one per "Pay" click) and passed
+  through — a good follow-up to discuss, but out of scope for this fix.

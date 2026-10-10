@@ -48,7 +48,7 @@ By the end of this workshop, participants will be able to:
 - **Duration:** ~3¼ hours for Exercises 1–3, plus debriefs. Exercise 4
   (fixing the source code) has a runnable sample repo
   (`checkout-service-incident-sourcecode/`) but is not timed yet;
-  see the TODOs in `exercises/exercise-4-fix-with-ai.md`.
+  see `exercises/exercise-4-fix-with-ai.md`.
 - **Group size:** solo, in pairs, or in small groups (3–4 people)
 - **Style:** each exercise gives participants a task, sample AI prompts
   to try, and space to compare AI output with the model answers in the
