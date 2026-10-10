@@ -56,8 +56,6 @@ By the end of this workshop, participants will be able to:
 
 ## Folder structure
 
-- **`rfc-template.docx`**: the organisation's Request for Change form
-  (used in Exercise 3, Part D)
 - **`checkout-service-incident-exercises/`**: hand this to participants
   - `scenario/00-incident-brief.md`: the process and the incident that
     kicks things off
@@ -85,6 +83,8 @@ By the end of this workshop, participants will be able to:
     reconciliation, stakeholder notes). **Hand these out at the start of
     Exercise 3** for the most realistic flow, or share everything up
     front for simplicity.
+  - `request-for-change/rfc-template.docx`: the organisation's Request
+    for Change form (used in Exercise 3, Part D)
 - **`checkout-service-incident-facilitator/`**: facilitator only, don't
   share
   - `README.md`: this file
