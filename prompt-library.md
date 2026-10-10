@@ -93,8 +93,8 @@ your own (sanitised) data. These are starting points, not scripts.
   work?"
 - "This client's retry policy matches the one in our config file.
   Critique it against the incident timeline, then fix it: exponential
-  backoff with jitter, stop retrying on 429 unless `Retry-After` allows
-  it, add a circuit breaker, and make the requests idempotent."
+  backoff with jitter, honour `Retry-After` on 429, add a circuit
+  breaker, and make the requests idempotent."
 - "Review this diff as a strict code reviewer: does it match this RFC
   scope exactly? Any risk it introduces that isn't mentioned in the RFC?"
 

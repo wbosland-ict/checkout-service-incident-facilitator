@@ -66,7 +66,7 @@ answer.
   give you **1 passed** before you change anything. The code carries no
   comments or hints about what's wrong; that's deliberate.
 - **What to build:** a single-query fetch for cart items + products
-  (eager loading via `.Include()`/`.ThenInclude()`, or a split query), a
+  (eager loading via `.Include()`/`.ThenInclude()`), a
   transaction scope narrowed to exclude the inventory/payment remote
   calls, a
   payment client with backoff + jitter + `Retry-After` handling +

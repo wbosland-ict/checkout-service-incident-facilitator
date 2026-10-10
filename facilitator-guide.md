@@ -240,8 +240,9 @@ Look for:
   What did you change in the AI's runbook section before accepting it?
 - *Solution and scope (Part C):* Did anyone's AI recommend "just increase
   the pool" or "ask for a higher rate limit" as *the* solution? Why is
-  that a symptom fix? Compare two groups: what did they put in the RFC
-  and what became a follow-up action?
+  that a symptom fix? The RFC scope is given (eager-loading fix and
+  retry policy); compare two groups: which other options did they turn
+  into follow-up actions, and with which owners and dates?
 
 **Discussion prompts (Part D, RFC):**
 - *Drafting (step 1):* Did anyone have the AI fill the `.docx` directly?
